@@ -34,16 +34,28 @@ const CANDIDATE_PATHS = [
   "inventory.csv",
 ];
 
-function readFirstExistingFile(): { filePath: string; csv: string } {
+function readFirstExistingFile(): { filePath: string; csv: string } | null {
   for (const rel of CANDIDATE_PATHS) {
     const abs = path.join(process.cwd(), rel);
     if (fs.existsSync(abs)) {
       return { filePath: rel, csv: fs.readFileSync(abs, "utf8") };
     }
   }
-  throw new Error(
-    `No inventory.csv found. Tried: ${CANDIDATE_PATHS.join(", ")}`
-  );
+  return null;
+}
+
+async function readInventoryCsv(reqUrl: string): Promise<{ filePath: string; csv: string }> {
+  const local = readFirstExistingFile();
+  if (local) return local;
+
+  const publicUrl = new URL("/inventory.csv", reqUrl);
+  const res = await fetch(publicUrl.toString(), { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(
+      `No inventory.csv found. Tried: ${CANDIDATE_PATHS.join(", ")} and ${publicUrl.toString()}`
+    );
+  }
+  return { filePath: publicUrl.pathname, csv: await res.text() };
 }
 
 function splitCsvLine(line: string): string[] {
@@ -107,7 +119,7 @@ export async function GET(req: Request) {
     const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
     const pageSize = Math.max(1, Math.min(5000, Number(url.searchParams.get("pageSize") || "0")));
 
-    const { filePath, csv } = readFirstExistingFile();
+    const { filePath, csv } = await readInventoryCsv(req.url);
 
     const lines = csv.split(/\r?\n/).filter((l) => l.trim() !== "");
     if (lines.length < 2) {

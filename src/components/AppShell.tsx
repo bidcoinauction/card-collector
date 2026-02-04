@@ -17,7 +17,23 @@ type ApiResponse = {
   pageSize: number;
   total: number;
   totalPages: number;
-  items: CardRow[];
+  items?: CardRow[];
+  cards?: {
+    id?: string;
+    title?: string;
+    player?: string;
+    set?: string;
+    season?: string;
+    team?: string;
+    league?: string;
+    features?: string;
+    images?: string[];
+    imageUrl?: string;
+    marketAvg?: number | null;
+    lastSold?: number | null;
+    lastSoldEnded?: string;
+    lastSoldUrl?: string;
+  }[];
   facets: { league: string[]; set: string[]; team: string[]; season: string[] };
 };
 
@@ -164,16 +180,33 @@ export default function AppShell() {
   }
 
   const items: (CardComputed & { tag?: string; condition?: string })[] = useMemo(() => {
-    const raw = resp?.items ?? [];
+    const raw = resp?.items ?? resp?.cards ?? [];
     return raw
       .map((c, idx) => {
-        const title = (c["Title"] || "").trim() || "(untitled)";
-        const id =
-          (c["Custom label (SKU)"] || "").trim() ||
-          `${title}__${(c["Season"] || "").trim()}__${idx}`;
+        const card = c as CardRow & {
+          id?: string;
+          title?: string;
+          player?: string;
+          set?: string;
+          season?: string;
+          team?: string;
+          league?: string;
+          features?: string;
+          images?: string[];
+          imageUrl?: string;
+          marketAvg?: number | null;
+          lastSold?: number | null;
+          lastSoldEnded?: string;
+          lastSoldUrl?: string;
+        };
 
-        const baseMarket = money(c["Market Avg (eBay 90d USD)"]);
-        const lastSold = money(c["Last Sold Raw (USD)"]);
+        const title = (card.title || card["Title"] || "").trim() || "(untitled)";
+        const id =
+          (card.id || card["Custom label (SKU)"] || "").trim() ||
+          `${title}__${(card.season || card["Season"] || "").trim()}__${idx}`;
+
+        const baseMarket = card.marketAvg ?? money(card["Market Avg (eBay 90d USD)"]);
+        const lastSold = card.lastSold ?? money(card["Last Sold Raw (USD)"]);
         const ov = overrides[id];
 
         const marketAvg = ov?.marketAvg ?? baseMarket;
@@ -182,17 +215,19 @@ export default function AppShell() {
         return {
           id,
           title,
-          player: (c["Player"] || "").trim(),
-          set: (c["Set"] || "").trim(),
-          season: (c["Season"] || "").trim(),
-          team: (c["Team"] || "").trim(),
-          league: (c["League"] || "").trim(),
-          features: (c["Features"] || "").trim(),
-          images: urlsFromImages(c["Images"]),
+          player: (card.player || card["Player"] || "").trim(),
+          set: (card.set || card["Set"] || "").trim(),
+          season: (card.season || card["Season"] || "").trim(),
+          team: (card.team || card["Team"] || "").trim(),
+          league: (card.league || card["League"] || "").trim(),
+          features: (card.features || card["Features"] || "").trim(),
+          images: Array.isArray(card.images) && card.images.length
+            ? card.images
+            : urlsFromImages(card["Images"] ?? card.imageUrl ?? ""),
           marketAvg,
           lastSold,
-          lastSoldEnded: (c["Last Sold Raw Ended"] || "").trim(),
-          lastSoldUrl: (c["Last Sold Raw URL"] || "").trim(),
+          lastSoldEnded: (card.lastSoldEnded || card["Last Sold Raw Ended"] || "").trim(),
+          lastSoldUrl: (card.lastSoldUrl || card["Last Sold Raw URL"] || "").trim(),
           delta,
           tag: ov?.tag,
           condition: ov?.condition,
