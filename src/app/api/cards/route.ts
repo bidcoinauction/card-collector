@@ -124,7 +124,7 @@ export async function GET(req: Request) {
     const lines = csv.split(/\r?\n/).filter((l) => l.trim() !== "");
     if (lines.length < 2) {
       return NextResponse.json(
-        { cards: [], count: 0, source: filePath },
+        { cards: [], items: [], count: 0, total: 0, totalPages: 1, source: filePath, page, pageSize: pageSize || null },
         { headers: { "x-inventory-count": "0", "x-inventory-source": filePath } }
       );
     }
@@ -196,8 +196,10 @@ export async function GET(req: Request) {
       cards = allCards.slice(start, start + pageSize);
     }
 
+    const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(count / pageSize)) : 1;
+
     return NextResponse.json(
-      { cards, count, source: filePath, page, pageSize: pageSize || null },
+      { cards, items: cards, count, total: count, totalPages, source: filePath, page, pageSize: pageSize || null },
       {
         headers: {
           "x-inventory-count": String(count),

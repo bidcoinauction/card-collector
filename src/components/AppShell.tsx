@@ -15,8 +15,9 @@ import { money, urlsFromImages } from "@/lib/query";
 type ApiResponse = {
   page: number;
   pageSize: number;
-  total: number;
-  totalPages: number;
+  total?: number;
+  totalPages?: number;
+  count?: number;
   items?: CardRow[];
   cards?: {
     id?: string;
@@ -326,16 +327,24 @@ export default function AppShell() {
     return syntheticHistory(id, c?.marketAvg ?? null, c?.lastSold ?? null);
   }
 
+  const totalPages = useMemo(() => {
+    if (resp?.totalPages) return resp.totalPages;
+    const count = resp?.count ?? items.length;
+    const size = resp?.pageSize ?? pageSize;
+    if (!size) return 1;
+    return Math.max(1, Math.ceil(count / size));
+  }, [resp, items.length, pageSize]);
+
   return (
     <div className={`app ${compact ? "compact" : ""}`}>
       <Sidebar />
 
       <div className="main">
         <Topbar
-          total={resp?.total ?? 0}
+          total={resp?.total ?? resp?.count ?? items.length}
           page={resp?.page ?? page}
           pageSize={resp?.pageSize ?? pageSize}
-          totalPages={resp?.totalPages ?? 1}
+          totalPages={totalPages}
           q={q}
           onQ={(v) => { setPage(1); setQ(v); }}
           sort={sort}
@@ -377,7 +386,7 @@ export default function AppShell() {
           loading={loading}
           items={items}
           page={resp?.page ?? page}
-          totalPages={resp?.totalPages ?? 1}
+          totalPages={totalPages}
           onPage={setPage}
           selected={selected}
           onSelect={toggleSelect}
