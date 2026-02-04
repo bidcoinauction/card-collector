@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 
+export const runtime = "nodejs";
+
 type Card = {
   id: string;
   title: string;
@@ -34,16 +36,28 @@ const CANDIDATE_PATHS = [
   "inventory.csv",
 ];
 
-function readFirstExistingFile(): { filePath: string; csv: string } {
+function readFirstExistingFile(): { filePath: string; csv: string } | null {
   for (const rel of CANDIDATE_PATHS) {
     const abs = path.join(process.cwd(), rel);
     if (fs.existsSync(abs)) {
       return { filePath: rel, csv: fs.readFileSync(abs, "utf8") };
     }
   }
-  throw new Error(
-    `No inventory.csv found. Tried: ${CANDIDATE_PATHS.join(", ")}`
-  );
+  return null;
+}
+
+async function readInventoryCsv(reqUrl: string): Promise<{ filePath: string; csv: string }> {
+  const local = readFirstExistingFile();
+  if (local) return local;
+
+  const publicUrl = new URL("/inventory.csv", reqUrl);
+  const res = await fetch(publicUrl.toString(), { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(
+      `No inventory.csv found. Tried: ${CANDIDATE_PATHS.join(", ")} and ${publicUrl.toString()}`
+    );
+  }
+  return { filePath: publicUrl.pathname, csv: await res.text() };
 }
 
 function splitCsvLine(line: string): string[] {
@@ -107,12 +121,12 @@ export async function GET(req: Request) {
     const page = Math.max(1, Number(url.searchParams.get("page") || "1"));
     const pageSize = Math.max(1, Math.min(5000, Number(url.searchParams.get("pageSize") || "0")));
 
-    const { filePath, csv } = readFirstExistingFile();
+    const { filePath, csv } = await readInventoryCsv(req.url);
 
     const lines = csv.split(/\r?\n/).filter((l) => l.trim() !== "");
     if (lines.length < 2) {
       return NextResponse.json(
-        { cards: [], count: 0, source: filePath },
+        { cards: [], items: [], count: 0, total: 0, totalPages: 1, source: filePath, page, pageSize: pageSize || null },
         { headers: { "x-inventory-count": "0", "x-inventory-source": filePath } }
       );
     }
@@ -184,8 +198,10 @@ export async function GET(req: Request) {
       cards = allCards.slice(start, start + pageSize);
     }
 
+    const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(count / pageSize)) : 1;
+
     return NextResponse.json(
-      { cards, count, source: filePath, page, pageSize: pageSize || null },
+      { cards, items: cards, count, total: count, totalPages, source: filePath, page, pageSize: pageSize || null },
       {
         headers: {
           "x-inventory-count": String(count),
