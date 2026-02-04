@@ -25,16 +25,13 @@ export default function CardCard({
   onOpen: () => void;
   compact: boolean;
   history: number[];
-  /** set true for above-the-fold cards */
   priority?: boolean;
 }) {
   const delta = card.delta;
   const deltaClass = delta == null ? "" : delta >= 0 ? "up" : "down";
 
-  // treat 0 as "missing" for derived values
   const displayMarket = card.marketAvg === 0 ? null : card.marketAvg;
-  const displayDelta =
-    delta == null || !Number.isFinite(delta) || delta === 0 ? null : delta;
+  const displayDelta = delta == null || !Number.isFinite(delta) || delta === 0 ? null : delta;
 
   const img = card.images?.[0] || "";
 
@@ -62,11 +59,14 @@ export default function CardCard({
 
         {img ? (
           <div
-            className="cardImg"
+            className="imgFrame"
             style={{
               position: "relative",
               width: "100%",
-              height: "100%",
+              aspectRatio: "2.5 / 3.5",
+              overflow: "hidden",
+              borderRadius: 14,
+              background: "rgba(0,0,0,0.04)",
             }}
           >
             <Image
