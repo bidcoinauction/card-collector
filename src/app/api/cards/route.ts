@@ -165,11 +165,12 @@ export async function GET(req: Request) {
     const page = Math.max(1, Number(url.searchParams.get("page") || 1) || 1);
     const pageSize = Math.max(1, Math.min(200, Number(url.searchParams.get("pageSize") || 24) || 24));
 
-    const candidates = [
-      path.join(process.cwd(), "data", "inventory.hybrid.csv"),
-      path.join(process.cwd(), "data", "full_card_inventory.normalized.csv"),
-      path.join(process.cwd(), "public", "inventory.csv"),
-    ];
+ const candidates = [
+  path.join(process.cwd(), "public", "inventory.csv"),
+  path.join(process.cwd(), "data", "inventory.hybrid.csv"),
+  path.join(process.cwd(), "data", "full_card_inventory.normalized.csv"),
+];
+
     const chosen = readFirstExisting(candidates);
 
     if (!chosen) {
