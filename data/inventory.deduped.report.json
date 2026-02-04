@@ -1,0 +1,181 @@
+{
+  "input": "/Users/powwow/card-collector/data/inventory.hybrid.csv",
+  "output_csv": "/Users/powwow/card-collector/data/inventory.deduped.csv",
+  "output_tsv": "/Users/powwow/card-collector/data/inventory.deduped.tsv",
+  "delimiter_detected": "CSV",
+  "rows_in": 393,
+  "rows_out": 365,
+  "merged_rows": 28,
+  "duplicate_groups": 24,
+  "fill_blanks": true,
+  "merge_values": "keep_old",
+  "duplicate_samples": [
+    {
+      "key": "|2024|chrome||118|kjell watjen||uefa|||||||raw",
+      "kept_id": "c_ff4b4f8d",
+      "merged_ids": [
+        "c_ff4b4f8d"
+      ]
+    },
+    {
+      "key": "|2023|select||245|marcus rashford||premier league|||||||raw",
+      "kept_id": "c_3a4e130",
+      "merged_ids": [
+        "c_3a4e130"
+      ]
+    },
+    {
+      "key": "|2023|select||161|erling haaland||premier league|||||||raw",
+      "kept_id": "c_99562509",
+      "merged_ids": [
+        "c_99562509"
+      ]
+    },
+    {
+      "key": "|2023|topps finest mls||1|lionel messi|inter miami cf|mls|||||||raw",
+      "kept_id": "c_466d68a7",
+      "merged_ids": [
+        "c_466d68a7"
+      ]
+    },
+    {
+      "key": "|2022|merlin chrome||105|kylian mbappe||uefa|||||||raw",
+      "kept_id": "c_a7df9fc4",
+      "merged_ids": [
+        "c_a7df9fc4"
+      ]
+    },
+    {
+      "key": "|2023|select||70|kobbie mainoo||premier league|||||||raw",
+      "kept_id": "c_bc1f5bd9",
+      "merged_ids": [
+        "c_bc1f5bd9"
+      ]
+    },
+    {
+      "key": "||topps finest mls|||kerwin vargas||mls|||||||raw",
+      "kept_id": "c_2a9311e9",
+      "merged_ids": [
+        "c_2a9311e9"
+      ]
+    },
+    {
+      "key": "|2023|panini select premier league||220|matheus cunha|wolverhampton wanderers|premier league|||||||raw",
+      "kept_id": "c_ae09e373",
+      "merged_ids": [
+        "c_ae09e373"
+      ]
+    },
+    {
+      "key": "||topps finest mls|||riqui puig||mls|||||||raw",
+      "kept_id": "c_558338fa",
+      "merged_ids": [
+        "c_558338fa"
+      ]
+    },
+    {
+      "key": "||topps finest mls|||pedro de la vega||mls|||||||raw",
+      "kept_id": "c_5ec8fae",
+      "merged_ids": [
+        "c_5ec8fae"
+      ]
+    },
+    {
+      "key": "||topps finest mls|||marco reus||mls|||||||raw",
+      "kept_id": "c_a7df4f8c",
+      "merged_ids": [
+        "c_a7df4f8c"
+      ]
+    },
+    {
+      "key": "||||||||||||||",
+      "kept_id": "c_e4e21f1384",
+      "merged_ids": []
+    },
+    {
+      "key": "|2024|2024 topps finest mls|||riqui puig||mls|||||||raw",
+      "kept_id": "c_92945556",
+      "merged_ids": [
+        "c_92945556"
+      ]
+    },
+    {
+      "key": "|2023|topps merlin||96|bradley barcola|paris saint-germain|uefa club competitions|||||||raw",
+      "kept_id": "c_893268e2",
+      "merged_ids": [
+        "c_893268e2"
+      ]
+    },
+    {
+      "key": "|2023|topps merlin||131|thijs dallinga|toulouse|uefa club competitions|||||||raw",
+      "kept_id": "c_8c8de4b",
+      "merged_ids": [
+        "c_8c8de4b"
+      ]
+    },
+    {
+      "key": "|2023|topps finest mls||badf|diego fagundez|la galaxy|mls|||||||raw",
+      "kept_id": "c_46b6fe7f",
+      "merged_ids": [
+        "c_46b6fe7f"
+      ]
+    },
+    {
+      "key": "|2023|topps finest mls||231|pedro de la vega|seattle sounders fc|mls|||||||raw",
+      "kept_id": "c_8939f85d",
+      "merged_ids": [
+        "c_8939f85d"
+      ]
+    },
+    {
+      "key": "|2023|topps finest mls||47|diogo goncalves|real salt lake|mls|||||||raw",
+      "kept_id": "c_d4f49fdd",
+      "merged_ids": [
+        "c_d4f49fdd"
+      ]
+    },
+    {
+      "key": "|2024|topps finest mls||149|bongokuhle hlongwane|minnesota united fc|mls|||||||raw",
+      "kept_id": "c_fcc21b22",
+      "merged_ids": [
+        "c_fcc21b22"
+      ]
+    },
+    {
+      "key": "|2024|topps finest mls||202|riqui puig|la galaxy|mls|||||||raw",
+      "kept_id": "c_507cdec6",
+      "merged_ids": [
+        "c_507cdec6"
+      ]
+    },
+    {
+      "key": "|2023|panini select premier league select stars||19|jarrod bowen|west ham united|premier league|||||||raw",
+      "kept_id": "c_f02cb89",
+      "merged_ids": [
+        "c_f02cb89"
+      ]
+    },
+    {
+      "key": "|2023|panini select premier league||110|kai havertz|arsenal|premier league|||||||raw",
+      "kept_id": "c_12b4d186",
+      "merged_ids": [
+        "c_12b4d186"
+      ]
+    },
+    {
+      "key": "|2023|panini select premier league||15|emiliano martinez|aston villa|premier league|||||||raw",
+      "kept_id": "c_4eb8b8c5",
+      "merged_ids": [
+        "c_4eb8b8c5"
+      ]
+    },
+    {
+      "key": "|2024|2024 topps finest mls||231|pedro de la vega|seattle sounders fc|mls|||||||raw",
+      "kept_id": "c_e7edb6f6",
+      "merged_ids": [
+        "c_e7edb6f6",
+        "c_e7edb6f6"
+      ]
+    }
+  ]
+}
