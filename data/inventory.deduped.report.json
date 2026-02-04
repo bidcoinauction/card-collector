@@ -7,7 +7,7 @@
   "rows_out": 365,
   "merged_rows": 28,
   "duplicate_groups": 24,
-  "fill_blanks": true,
+  "fill_blanks": false,
   "merge_values": "keep_old",
   "duplicate_samples": [
     {
