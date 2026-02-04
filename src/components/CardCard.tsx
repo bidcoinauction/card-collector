@@ -1,10 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import Sparkline from "./Sparkline";
 import { CardComputed } from "@/lib/types";
 
-function fmtMoney(n: number | null) {
+function fmtMoney(n: number | null, opts?: { zeroIsMissing?: boolean }) {
   if (n == null || !Number.isFinite(n)) return "—";
+  if (opts?.zeroIsMissing && n === 0) return "—";
   return n.toLocaleString(undefined, { style: "currency", currency: "USD" });
 }
 
@@ -15,6 +17,7 @@ export default function CardCard({
   onOpen,
   compact,
   history,
+  priority = false,
 }: {
   card: CardComputed;
   checked: boolean;
@@ -22,18 +25,28 @@ export default function CardCard({
   onOpen: () => void;
   compact: boolean;
   history: number[];
+  /** set true for above-the-fold cards */
+  priority?: boolean;
 }) {
   const delta = card.delta;
   const deltaClass = delta == null ? "" : delta >= 0 ? "up" : "down";
 
-  const img = card.images[0];
+  // treat 0 as "missing" for derived values
+  const displayMarket = card.marketAvg === 0 ? null : card.marketAvg;
+  const displayDelta =
+    delta == null || !Number.isFinite(delta) || delta === 0 ? null : delta;
+
+  const img = card.images?.[0] || "";
 
   return (
-    <article className="card" onClick={(e) => {
-      const t = e.target as HTMLElement;
-      if (t.closest("button") || t.closest("input")) return;
-      onOpen();
-    }}>
+    <article
+      className="card"
+      onClick={(e) => {
+        const t = e.target as HTMLElement;
+        if (t.closest("button") || t.closest("input")) return;
+        onOpen();
+      }}
+    >
       <div className="imgWrap">
         <div className="check">
           <input
@@ -48,7 +61,27 @@ export default function CardCard({
         {card.league ? <span className="tag">{card.league}</span> : null}
 
         {img ? (
-          <img src={img} alt={card.title} loading="lazy" decoding="async" />
+          <div
+            className="cardImg"
+            style={{
+              position: "relative",
+              width: "100%",
+              height: "100%",
+            }}
+          >
+            <Image
+              src={img}
+              alt={card.title}
+              fill
+              priority={priority}
+              sizes={
+                compact
+                  ? "(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 16vw"
+                  : "(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+              }
+              style={{ objectFit: "cover" }}
+            />
+          </div>
         ) : (
           <div className="noImg">No image</div>
         )}
@@ -57,20 +90,29 @@ export default function CardCard({
       <div className="cardBody">
         <div className="cardTitleRow">
           <h2 className="cardTitle">{card.title}</h2>
-          <span className="price">{fmtMoney(card.marketAvg)}</span>
+          <span className="price">{fmtMoney(displayMarket, { zeroIsMissing: true })}</span>
         </div>
 
         <div className="meta">
-          <div className="metaLine">{card.season} • {card.set}</div>
+          <div className="metaLine">
+            {card.season} • {card.set}
+          </div>
           <div className="metaLine muted">Condition: raw</div>
         </div>
 
         <div className="valueRow">
           <span className={`delta ${deltaClass}`}>
-            {delta == null ? "—" : delta >= 0 ? `▲ ${fmtMoney(Math.abs(delta))}` : `▼ ${fmtMoney(Math.abs(delta))}`}
+            {displayDelta == null
+              ? "—"
+              : displayDelta >= 0
+                ? `▲ ${fmtMoney(Math.abs(displayDelta))}`
+                : `▼ ${fmtMoney(Math.abs(displayDelta))}`}
           </span>
 
-          <span className="updated" title={card.lastSoldEnded ? `Last sold ended: ${card.lastSoldEnded}` : "No last sold date"}>
+          <span
+            className="updated"
+            title={card.lastSoldEnded ? `Last sold ended: ${card.lastSoldEnded}` : "No last sold date"}
+          >
             ⏱
           </span>
 

@@ -38,7 +38,7 @@ export default function CardGrid({
         <div className={`grid ${compact ? "compact" : ""}`}>
           {loading
             ? Array.from({ length: 12 }).map((_, i) => <SkeletonCard key={i} />)
-            : items.map((c) => (
+            : items.map((c, i) => (
                 <CardCard
                   key={c.id}
                   card={c}
@@ -47,6 +47,7 @@ export default function CardGrid({
                   onOpen={() => onOpen(c.id)}
                   compact={compact}
                   history={historyFor(c.id)}
+                  priority={i < 8} // above-the-fold only
                 />
               ))}
         </div>
@@ -65,7 +66,7 @@ export default function CardGrid({
           {loading ? (
             <div className="listLoading">Loading…</div>
           ) : (
-            items.map((c) => (
+            items.map((c, i) => (
               <CardListRow
                 key={c.id}
                 card={c}
@@ -74,6 +75,7 @@ export default function CardGrid({
                 onOpen={() => onOpen(c.id)}
                 tagOverride={overrides[c.id]?.tag}
                 conditionOverride={overrides[c.id]?.condition}
+                priority={i < 12}
               />
             ))
           )}
@@ -84,7 +86,9 @@ export default function CardGrid({
         <button className="btn ghost" onClick={() => onPage(Math.max(1, page - 1))} disabled={page <= 1}>
           Prev
         </button>
-        <div className="pagerText">Page {page} / {totalPages}</div>
+        <div className="pagerText">
+          Page {page} / {totalPages}
+        </div>
         <button className="btn ghost" onClick={() => onPage(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>
           Next
         </button>
