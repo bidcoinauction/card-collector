@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 import CardGrid from "./CardGrid";
@@ -19,14 +20,13 @@ type ApiResponse = {
   totalPages: number;
   items: CardRow[];
   facets?: { league: string[]; set: string[]; team: string[]; season: string[] };
-  // optional metadata
   source?: string;
 };
 
 type Override = {
   tag?: string;
   condition?: string;
-  marketAvg?: number;
+  marketAvg?: number; // manual override
 };
 
 type HistoryPoint = {
@@ -39,8 +39,9 @@ const OV_KEY = "cc_overrides_v1";
 const DEL_KEY = "cc_deleted_v1";
 const HIST_KEY = "cc_value_history_v1";
 
-function fmtMoney(n: number | null) {
+function fmtMoney(n: number | null, opts?: { zeroIsMissing?: boolean }) {
   if (n == null || !Number.isFinite(n)) return "—";
+  if (opts?.zeroIsMissing && n === 0) return "—";
   return n.toLocaleString(undefined, { style: "currency", currency: "USD" });
 }
 
@@ -84,7 +85,7 @@ function coerceArray<T = any>(v: unknown): T[] {
 }
 
 function normalizeApiResponse(raw: any, fallbackPage: number, fallbackPageSize: number): ApiResponse {
-  // Shape A (your App expects): { page, pageSize, total, totalPages, items, facets }
+  // Shape A: { page, pageSize, total, totalPages, items, facets }
   if (raw && Array.isArray(raw.items)) {
     const page = Number(raw.page || fallbackPage) || fallbackPage;
     const pageSize = Number(raw.pageSize || fallbackPageSize) || fallbackPageSize;
@@ -104,7 +105,7 @@ function normalizeApiResponse(raw: any, fallbackPage: number, fallbackPageSize: 
     };
   }
 
-  // Shape B (your prod API): { cards, count, page, pageSize, ... }
+  // Shape B: { cards, count, page, pageSize, ... }
   if (raw && Array.isArray(raw.cards)) {
     const page = Number(raw.page || fallbackPage) || fallbackPage;
     const pageSize = Number(raw.pageSize || fallbackPageSize) || fallbackPageSize;
@@ -113,7 +114,6 @@ function normalizeApiResponse(raw: any, fallbackPage: number, fallbackPageSize: 
       Number(raw.totalPages) ||
       (pageSize > 0 ? Math.max(1, Math.ceil(total / pageSize)) : 1);
 
-    // treat cards as items for the UI layer
     return {
       page,
       pageSize,
@@ -135,7 +135,6 @@ function normalizeApiResponse(raw: any, fallbackPage: number, fallbackPageSize: 
     return { page, pageSize, total, totalPages, items };
   }
 
-  // Fallback
   return { page: fallbackPage, pageSize: fallbackPageSize, total: 0, totalPages: 1, items: [] };
 }
 
@@ -219,7 +218,6 @@ export default function AppShell() {
       })
       .then((data: any) => {
         if (!alive) return;
-
         const normalized = normalizeApiResponse(data, page, pageSize);
         setResp(normalized);
         setLoading(false);
@@ -242,7 +240,6 @@ export default function AppShell() {
     setHistory((prev) => {
       const cur = prev[cardId] ? [...prev[cardId]] : [];
       cur.push({ v: value, at, source });
-      // keep last 60 points
       const trimmed = cur.slice(-60);
       return { ...prev, [cardId]: trimmed };
     });
@@ -253,10 +250,6 @@ export default function AppShell() {
 
     return raw
       .map((cAny: any, idx) => {
-        // Support BOTH schemas:
-        // - CSV style: c["Title"], c["Season"], c["Images"], etc.
-        // - Normalized style: c.title, c.season, c.images, etc.
-
         const title = firstStr(cAny?.title, cAny?.Title) || "(untitled)";
 
         const id =
@@ -268,16 +261,27 @@ export default function AppShell() {
             cAny?.["Custom Label (SKU)"]
           ) || `${title}__${firstStr(cAny?.season, cAny?.Season)}__${idx}`;
 
-        // Market/last sold: support normalized + CSV columns
-        const baseMarket = money(
+        // ---- Pricing cleanup ----
+        // Parse both schemas
+        const baseMarketRaw = money(
           firstStr(cAny?.marketAvg, cAny?.market_avg, cAny?.["Market Avg (eBay 90d USD)"])
         );
-        const lastSold = money(firstStr(cAny?.lastSold, cAny?.last_sold, cAny?.["Last Sold Raw (USD)"]));
+        const lastSoldRaw = money(
+          firstStr(cAny?.lastSold, cAny?.last_sold, cAny?.["Last Sold Raw (USD)"])
+        );
+
+        // Treat 0 as missing for derived values (prevents "$0.00" spam)
+        const baseMarket = baseMarketRaw === 0 ? null : baseMarketRaw;
+        const lastSold = lastSoldRaw === 0 ? null : lastSoldRaw;
+
         const ov = overrides[id];
 
-        const marketAvg = ov?.marketAvg ?? baseMarket;
+        // Respect manual override even if 0; otherwise use derived
+        const marketAvg = ov?.marketAvg !== undefined ? ov.marketAvg : baseMarket;
+
         const delta = marketAvg != null && lastSold != null ? marketAvg - lastSold : null;
 
+        // ---- Images ----
         const images =
           coerceArray<string>(cAny?.images).length > 0
             ? coerceArray<string>(cAny?.images)
@@ -298,7 +302,6 @@ export default function AppShell() {
 
           marketAvg,
           lastSold,
-
           lastSoldEnded: firstStr(cAny?.lastSoldEnded, cAny?.["Last Sold Raw Ended"]),
           lastSoldUrl: firstStr(cAny?.lastSoldUrl, cAny?.["Last Sold Raw URL"]),
 
@@ -553,22 +556,32 @@ export default function AppShell() {
                     </div>
                     <div className="kv">
                       <div className="k">Market Avg</div>
-                      <div className="v">{fmtMoney(openCard.marketAvg)}</div>
+                      <div className="v">{fmtMoney(openCard.marketAvg, { zeroIsMissing: true })}</div>
                     </div>
                     <div className="kv">
                       <div className="k">Last Sold</div>
-                      <div className="v">{fmtMoney(openCard.lastSold)}</div>
+                      <div className="v">{fmtMoney(openCard.lastSold, { zeroIsMissing: true })}</div>
                     </div>
                     <div className="kv">
                       <div className="k">Delta</div>
-                      <div className="v">{openCard.delta == null ? "—" : fmtMoney(openCard.delta)}</div>
+                      <div className="v">
+                        {openCard.delta == null ? "—" : fmtMoney(openCard.delta)}
+                      </div>
                     </div>
                   </div>
 
                   <div className="drawerImages">
                     {openCard.images.slice(0, 2).map((u) => (
                       <a key={u} className="drawerImgLink" href={u} target="_blank" rel="noreferrer">
-                        <img src={u} alt="" loading="lazy" decoding="async" />
+                        <div style={{ position: "relative", width: "100%", aspectRatio: "2.5 / 3.5" }}>
+                          <Image
+                            src={u}
+                            alt=""
+                            fill
+                            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                            style={{ objectFit: "cover" }}
+                          />
+                        </div>
                       </a>
                     ))}
                     {!openCard.images.length ? <div className="drawerPh">No images</div> : null}
@@ -584,7 +597,7 @@ export default function AppShell() {
                         <div className="historyTitle">Value Trend</div>
                         <div className="muted">Real history stored locally (per browser).</div>
                       </div>
-                      <div className="historyNow">{fmtMoney(openCard.marketAvg)}</div>
+                      <div className="historyNow">{fmtMoney(openCard.marketAvg, { zeroIsMissing: true })}</div>
                     </div>
                     <div className="historySpark">
                       <Sparkline values={historyFor(openCard.id)} />
