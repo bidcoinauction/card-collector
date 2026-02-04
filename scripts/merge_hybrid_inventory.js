@@ -39,109 +39,101 @@ const FILL_BLANKS = flag("--fill-blanks");
 // ----------------------------
 // CSV parsing (no dependencies)
 // ----------------------------
-function parseDelimited(text, delimiter = ",") {
-  const rows = [];
-  let row = [];
+function detectDelimiter(headerLine) {
+  // naive: pick delimiter that yields most columns
+  const candidates = [",", "\t", ";", "|"];
+  let best = ",";
+  let bestCount = 0;
+  for (const d of candidates) {
+    const c = splitCSVLine(headerLine, d).length;
+    if (c > bestCount) {
+      bestCount = c;
+      best = d;
+    }
+  }
+  return best;
+}
+
+function splitCSVLine(line, delimiter) {
+  const out = [];
   let cur = "";
   let inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    const next = text[i + 1];
-
-    if (inQuotes) {
-      if (ch === '"' && next === '"') {
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        // escaped quote
         cur += '"';
         i++;
-      } else if (ch === '"') {
-        inQuotes = false;
       } else {
-        cur += ch;
+        inQuotes = !inQuotes;
       }
       continue;
     }
-
-    if (ch === '"') {
-      inQuotes = true;
-      continue;
-    }
-
-    if (ch === delimiter) {
-      row.push(cur);
+    if (!inQuotes && ch === delimiter) {
+      out.push(cur);
       cur = "";
       continue;
     }
-
-    if (ch === "\n") {
-      row.push(cur);
-      cur = "";
-      // ignore empty last line
-      rows.push(row);
-      row = [];
-      continue;
-    }
-
-    if (ch === "\r") continue;
-
     cur += ch;
   }
-
-  if (cur.length || row.length) {
-    row.push(cur);
-    rows.push(row);
-  }
-
-  return rows;
+  out.push(cur);
+  return out.map((s) => s.trim());
 }
 
-function toObjects(rows) {
-  if (!rows.length) return { headers: [], objects: [] };
-  const headers = rows[0].map((h) => h.trim());
-  const objects = [];
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-    if (!r || r.every((x) => String(x ?? "").trim() === "")) continue;
-    const obj = {};
-    for (let c = 0; c < headers.length; c++) {
-      obj[headers[c]] = r[c] ?? "";
+function parseDelimited(text, delimiter = ",") {
+  const lines = String(text ?? "").split(/\r?\n/);
+
+  // accumulate records, respecting quotes across newlines
+  const rows = [];
+  let buf = "";
+  let inQuotes = false;
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx];
+
+    // count quotes to detect if we cross a record boundary
+    // (handles escaped quotes by ignoring doubled quotes)
+    const quoteCount = (line.match(/"/g) || []).length;
+    // rough but works well: toggles on odd counts; doubled quotes are two chars anyway
+    const toggles = quoteCount % 2 === 1;
+
+    if (buf) buf += "\n" + line;
+    else buf = line;
+
+    if (toggles) inQuotes = !inQuotes;
+
+    if (!inQuotes) {
+      // complete record
+      if (buf.trim().length) rows.push(buf);
+      buf = "";
     }
-    objects.push(obj);
   }
-  return { headers, objects };
-}
+  if (buf.trim().length) rows.push(buf);
 
-function escapeCSV(v) {
-  const s = String(v ?? "");
-  if (s.includes('"')) return `"${s.replace(/"/g, '""')}"`;
-  if (s.includes(",") || s.includes("\n") || s.includes("\r")) return `"${s}"`;
-  return s;
-}
+  if (!rows.length) return { headers: [], data: [] };
 
-function writeCSV(headers, objects) {
-  const lines = [];
-  lines.push(headers.join(","));
-  for (const o of objects) {
-    const line = headers.map((h) => escapeCSV(o[h] ?? "")).join(",");
-    lines.push(line);
-  }
-  return lines.join("\n") + "\n";
-}
+  const headerLine = rows.shift();
+  const headers = splitCSVLine(headerLine, delimiter);
 
-function writeTSV(headers, objects) {
-  const lines = [];
-  lines.push(headers.join("\t"));
-  for (const o of objects) {
-    const line = headers.map((h) => String(o[h] ?? "").replace(/\t/g, " ")).join("\t");
-    lines.push(line);
-  }
-  return lines.join("\n") + "\n";
+  const data = rows.map((r) => {
+    const cells = splitCSVLine(r, delimiter);
+    const obj = {};
+    for (let i = 0; i < headers.length; i++) {
+      obj[headers[i]] = cells[i] ?? "";
+    }
+    return obj;
+  });
+
+  return { headers, data };
 }
 
 // ----------------------------
-// Normalization helpers
+// Text normalization utilities
 // ----------------------------
-function deburr(s) {
-  return String(s ?? "")
+function deburr(str) {
+  // remove accents/diacritics (basic)
+  return String(str ?? "")
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "");
 }
@@ -161,6 +153,36 @@ function pickYear(v) {
   return m ? m[0] : "";
 }
 
+function extract4DigitYear(text) {
+  const t = String(text ?? "");
+  const m = t.match(/\b(19|20)\d{2}\b/);
+  return m ? m[0] : "";
+}
+
+function extractSeasonStartYear(text) {
+  const t = String(text ?? "");
+  // "2023-24" -> 2023 (start year)
+  const m = t.match(/\b((19|20)\d{2})\s*[-/]\s*\d{2}\b/);
+  return m ? m[1] : "";
+}
+
+function extractCardNoFromTitle(title) {
+  const t = String(title ?? "");
+  // e.g. "FIFA 221" / "UEFA 86" -> 221 / 86
+  const m = t.match(/\b(?:FIFA|UEFA|MLS|NBA|NFL|MLB|NHL)\s*#?\s*([A-Z0-9]{1,6})\b/i);
+  if (m) return m[1];
+
+  // e.g. "#221" -> 221
+  const m2 = t.match(/\b#\s*([A-Z0-9]{1,6})\b/i);
+  return m2 ? m2[1] : "";
+}
+
+function guessSetFromTitle(title) {
+  const t = String(title ?? "").trim();
+  // Remove leading year or season like "2024-25" / "2024"
+  return t.replace(/^\s*\b(19|20)\d{2}(?:\s*[-/]\s*\d{2})?\s*/i, "").trim();
+}
+
 function firstNonEmpty(...vals) {
   for (const v of vals) {
     const s = String(v ?? "").trim();
@@ -171,7 +193,8 @@ function firstNonEmpty(...vals) {
 
 // ----------------------------
 // Field mapping between old and new
-// (old headers are from your inventory.csv)
+// (old headers are from your inventory.
+//  new headers are from normalized schema)
 // ----------------------------
 const OLD_FIELD_GUESSES = {
   title: ["Title", "title"],
@@ -184,22 +207,46 @@ const OLD_FIELD_GUESSES = {
   images: ["Images", "Image", "image", "image_url"],
 };
 
-function getField(obj, names) {
-  for (const n of names) {
-    if (n in obj) return obj[n];
+function getField(row, guesses) {
+  for (const g of guesses) {
+    if (g in row) return row[g];
   }
   return "";
 }
 
-// Build a key used for matching
+// ----------------------------
+// Keying + scoring
+// ----------------------------
 function keyFromOld(row) {
+  const title = getField(row, OLD_FIELD_GUESSES.title);
+
   const player = norm(getField(row, OLD_FIELD_GUESSES.player));
-  const set = norm(getField(row, OLD_FIELD_GUESSES.set));
-  const card = norm(getField(row, OLD_FIELD_GUESSES.card_number));
-  const year = pickYear(getField(row, OLD_FIELD_GUESSES.year));
-  const team = norm(getField(row, OLD_FIELD_GUESSES.team));
+
+  // Prefer explicit Set/Card columns; fallback to parsing Title when blank.
+  const setRaw = firstNonEmpty(
+    getField(row, OLD_FIELD_GUESSES.set),
+    guessSetFromTitle(title)
+  );
+
+  const cardRaw = firstNonEmpty(
+    getField(row, OLD_FIELD_GUESSES.card_number),
+    extractCardNoFromTitle(title)
+  );
+
+  // Prefer a 4-digit year from Set/Title before falling back to Season ranges ("2023-24").
+  const yearRaw = firstNonEmpty(
+    getField(row, OLD_FIELD_GUESSES.year),
+    extract4DigitYear(setRaw),
+    extract4DigitYear(title),
+    extractSeasonStartYear(getField(row, OLD_FIELD_GUESSES.year))
+  );
+
+  const set = norm(setRaw);
+  const card = norm(cardRaw);
+  const year = pickYear(yearRaw);
+
   // primary key focuses on player+set+card_number+year
-  return `${player}|${set}|${card}|${year}`.trim();
+  return `${player}|${set}|${card}|${year}`;
 }
 
 function keyFromNew(row) {
@@ -207,273 +254,253 @@ function keyFromNew(row) {
   const set = norm(row.set);
   const card = norm(row.card_number);
   const year = pickYear(row.year);
-  return `${player}|${set}|${card}|${year}`.trim();
+  return `${player}|${set}|${card}|${year}`;
 }
 
 function scoreMatch(oldRow, newRow) {
+  // Higher is better; keep this simple and transparent.
   let score = 0;
 
-  const op = norm(getField(oldRow, OLD_FIELD_GUESSES.player));
-  const np = norm(newRow.player);
-  if (op && np && op === np) score += 5;
+  const oldPlayer = norm(getField(oldRow, OLD_FIELD_GUESSES.player));
+  const oldSet = norm(getField(oldRow, OLD_FIELD_GUESSES.set));
+  const oldCard = norm(getField(oldRow, OLD_FIELD_GUESSES.card_number));
+  const oldYear = pickYear(getField(oldRow, OLD_FIELD_GUESSES.year));
+  const oldTeam = norm(getField(oldRow, OLD_FIELD_GUESSES.team));
+  const oldLeague = norm(getField(oldRow, OLD_FIELD_GUESSES.league));
 
-  const os = norm(getField(oldRow, OLD_FIELD_GUESSES.set));
-  const ns = norm(newRow.set);
-  if (os && ns && os === ns) score += 3;
+  const newPlayer = norm(newRow.player);
+  const newSet = norm(newRow.set);
+  const newCard = norm(newRow.card_number);
+  const newYear = pickYear(newRow.year);
+  const newTeam = norm(newRow.team);
+  const newLeague = norm(newRow.league);
 
-  const oc = norm(getField(oldRow, OLD_FIELD_GUESSES.card_number));
-  const nc = norm(newRow.card_number);
-  if (oc && nc && oc === nc) score += 4;
+  if (oldPlayer && newPlayer && oldPlayer === newPlayer) score += 5;
+  if (oldSet && newSet && oldSet === newSet) score += 4;
+  if (oldCard && newCard && oldCard === newCard) score += 3;
+  if (oldYear && newYear && oldYear === newYear) score += 2;
+  if (oldTeam && newTeam && oldTeam === newTeam) score += 1;
+  if (oldLeague && newLeague && oldLeague === newLeague) score += 1;
 
-  const oy = pickYear(getField(oldRow, OLD_FIELD_GUESSES.year));
-  const ny = pickYear(newRow.year);
-  if (oy && ny && oy === ny) score += 2;
-
-  const ot = norm(getField(oldRow, OLD_FIELD_GUESSES.team));
-  const nt = norm(newRow.team);
-  if (ot && nt && ot === nt) score += 1;
-
-  const ol = norm(getField(oldRow, OLD_FIELD_GUESSES.league));
-  const nl = norm(newRow.league);
-  if (ol && nl && ol === nl) score += 1;
-
-  // small bonus if title contains player
-  const title = norm(getField(oldRow, OLD_FIELD_GUESSES.title));
-  if (title && np && title.includes(np)) score += 1;
+  // Soft partial matches
+  if (oldSet && newSet && (oldSet.includes(newSet) || newSet.includes(oldSet))) score += 1;
+  if (oldTeam && newTeam && (oldTeam.includes(newTeam) || newTeam.includes(oldTeam))) score += 0.5;
 
   return score;
 }
 
-// When collisions happen, keep old fields and add normalized with "norm_" prefix
-function mergeHeaders(oldHeaders, newHeaders) {
-  const out = [...oldHeaders];
-  const oldSet = new Set(oldHeaders);
+// ----------------------------
+// Merge strategy
+// ----------------------------
+function mergeRows(oldRow, newRow, fillBlanks) {
+  // Keep all old columns, add normalized columns if missing or if name collides prefix as norm_
+  const out = { ...oldRow };
 
-  for (const h of newHeaders) {
-    if (!oldSet.has(h)) {
-      out.push(h);
+  for (const [k, v] of Object.entries(newRow)) {
+    if (k in out) {
+      // collision: write to norm_*
+      const nk = `norm_${k}`;
+      if (fillBlanks) {
+        const cur = String(out[nk] ?? "").trim();
+        if (!cur && String(v ?? "").trim()) out[nk] = v;
+      } else {
+        if (!(nk in out)) out[nk] = v;
+      }
     } else {
-      // collision: only add prefixed version if it would differ or be useful
-      const pref = `norm_${h}`;
-      if (!oldSet.has(pref)) out.push(pref);
+      // non-collision
+      if (fillBlanks) {
+        const cur = String(out[k] ?? "").trim();
+        if (!cur && String(v ?? "").trim()) out[k] = v;
+        else if (!(k in out)) out[k] = v;
+      } else {
+        out[k] = v;
+      }
     }
   }
+
   return out;
 }
 
-function shouldFillBlank(oldVal, newVal) {
-  const o = String(oldVal ?? "").trim();
-  const n = String(newVal ?? "").trim();
-  return FILL_BLANKS && !o && !!n;
-}
-
-// Prefer: keep old values, but optionally fill blanks for certain common fields
-const FILL_PREFERRED = new Set([
-  "player",
-  "set",
-  "card_number",
-  "year",
-  "team",
-  "league",
-  "image",
-  "image_back",
-]);
-
-function fillOrKeep(outRow, oldHeaders, newRow) {
-  // newRow columns may collide; fill blanks safely
-  for (const [k, v] of Object.entries(newRow)) {
-    if (k in outRow) {
-      // collision
-      const pref = `norm_${k}`;
-      outRow[pref] = v ?? "";
-      if (FILL_PREFERRED.has(k) && shouldFillBlank(outRow[k], v)) {
-        outRow[k] = v ?? "";
-      }
-    } else {
-      outRow[k] = v ?? "";
-    }
-  }
-  return outRow;
-}
-
 // ----------------------------
-// Main
+// IO + main
 // ----------------------------
-function readText(p) {
+function readFileOrThrow(p) {
+  if (!fs.existsSync(p)) throw new Error(`File not found: ${p}`);
   return fs.readFileSync(p, "utf8");
 }
 
-function ensureDirFor(filePath) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+function ensureDirForFile(filePath) {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function writeDelimited(rows, delimiter, outPath) {
+  if (!rows.length) {
+    ensureDirForFile(outPath);
+    fs.writeFileSync(outPath, "");
+    return { columns: [] };
+  }
+
+  // Build union of keys across rows
+  const cols = [];
+  const seen = new Set();
+  for (const r of rows) {
+    for (const k of Object.keys(r)) {
+      if (!seen.has(k)) {
+        seen.add(k);
+        cols.push(k);
+      }
+    }
+  }
+
+  const escapeCell = (val) => {
+    const s = String(val ?? "");
+    const needs = s.includes('"') || s.includes("\n") || s.includes("\r") || s.includes(delimiter);
+    if (!needs) return s;
+    return `"${s.replace(/"/g, '""')}"`;
+  };
+
+  const lines = [];
+  lines.push(cols.map(escapeCell).join(delimiter));
+  for (const r of rows) {
+    lines.push(cols.map((c) => escapeCell(r[c])).join(delimiter));
+  }
+
+  ensureDirForFile(outPath);
+  fs.writeFileSync(outPath, lines.join("\n"), "utf8");
+  return { columns: cols };
 }
 
 function main() {
-  if (!fs.existsSync(OLD_PATH)) {
-    console.error(`❌ Missing old CSV: ${OLD_PATH}`);
-    process.exit(1);
-  }
-  if (!fs.existsSync(NEW_PATH)) {
-    console.error(`❌ Missing normalized CSV: ${NEW_PATH}`);
-    process.exit(1);
-  }
-
-  console.log(`📥 Old: ${OLD_PATH}`);
+  console.log(`\n📥 Old: ${OLD_PATH}`);
   console.log(`📥 New: ${NEW_PATH}`);
-  console.log(`🧠 Mode: ${FILL_BLANKS ? "fill blanks ON (--fill-blanks)" : "fill blanks OFF"}`);
+  console.log(`🧠 Mode: fill blanks ${FILL_BLANKS ? "ON" : "OFF"}`);
 
-  const oldText = readText(OLD_PATH);
-  const newText = readText(NEW_PATH);
+  const oldText = readFileOrThrow(OLD_PATH);
+  const newText = readFileOrThrow(NEW_PATH);
 
-  const oldRows = parseDelimited(oldText, ",");
-  const newRows = parseDelimited(newText, ",");
+  const oldDelim = detectDelimiter(oldText.split(/\r?\n/)[0] || ",");
+  const newDelim = detectDelimiter(newText.split(/\r?\n/)[0] || ",");
 
-  const { headers: oldHeaders, objects: oldObjs } = toObjects(oldRows);
-  const { headers: newHeaders, objects: newObjs } = toObjects(newRows);
+  const oldParsed = parseDelimited(oldText, oldDelim);
+  const newParsed = parseDelimited(newText, newDelim);
 
-  // index normalized by primary key
-  const idx = new Map();
-  for (const r of newObjs) {
+  const oldRows = oldParsed.data;
+  const newRows = newParsed.data;
+
+  // Index normalized rows by key
+  const index = new Map();
+  for (const r of newRows) {
     const k = keyFromNew(r);
-    if (!k) continue;
-    if (!idx.has(k)) idx.set(k, []);
-    idx.get(k).push(r);
+    if (!index.has(k)) index.set(k, []);
+    index.get(k).push(r);
   }
 
-  const outHeaders = mergeHeaders(oldHeaders, newHeaders);
+  const matched = [];
+  const unmatchedOld = [];
+  const ambiguous = [];
+  const usedNewKeys = new Set();
 
-  let matched = 0;
-  let unmatched = 0;
-  let ambiguous = 0;
+  for (const o of oldRows) {
+    const k = keyFromOld(o);
+    const candidates = index.get(k) || [];
 
-  const examples = {
-    unmatched_old_rows: [],
-    ambiguous_old_rows: [],
-  };
-
-  const usedNewIds = new Set();
-
-  const merged = oldObjs.map((oldRow) => {
-    const k = keyFromOld(oldRow);
-    const candidates = idx.get(k) || [];
-
-    let best = null;
-    let bestScore = -1;
+    if (!candidates.length) {
+      unmatchedOld.push({ key: k, ...o });
+      matched.push(o);
+      continue;
+    }
 
     if (candidates.length === 1) {
-      best = candidates[0];
-      bestScore = scoreMatch(oldRow, best);
-    } else if (candidates.length > 1) {
-      // choose best by score; track ambiguity if close
-      const scored = candidates
-        .map((c) => ({ c, s: scoreMatch(oldRow, c) }))
-        .sort((a, b) => b.s - a.s);
+      const best = candidates[0];
+      usedNewKeys.add(k);
+      matched.push(mergeRows(o, best, FILL_BLANKS));
+      continue;
+    }
 
-      best = scored[0].c;
-      bestScore = scored[0].s;
+    // multiple candidates: score them
+    let best = null;
+    let bestScore = -Infinity;
+    let secondBestScore = -Infinity;
 
-      const second = scored[1]?.s ?? -999;
-      if (second >= bestScore - 1) {
-        ambiguous++;
-        if (examples.ambiguous_old_rows.length < 10) {
-          examples.ambiguous_old_rows.push({
-            key: k,
-            old: {
-              Player: getField(oldRow, OLD_FIELD_GUESSES.player),
-              Set: getField(oldRow, OLD_FIELD_GUESSES.set),
-              "Card Number": getField(oldRow, OLD_FIELD_GUESSES.card_number),
-              Season: getField(oldRow, OLD_FIELD_GUESSES.year),
-              Team: getField(oldRow, OLD_FIELD_GUESSES.team),
-              Title: getField(oldRow, OLD_FIELD_GUESSES.title),
-            },
-            top_candidates: scored.slice(0, 3).map((x) => ({
-              score: x.s,
-              id: x.c.id,
-              player: x.c.player,
-              set: x.c.set,
-              card_number: x.c.card_number,
-              year: x.c.year,
-              team: x.c.team,
-            })),
-          });
-        }
+    for (const c of candidates) {
+      const s = scoreMatch(o, c);
+      if (s > bestScore) {
+        secondBestScore = bestScore;
+        bestScore = s;
+        best = c;
+      } else if (s > secondBestScore) {
+        secondBestScore = s;
       }
     }
 
-    const outRow = { ...oldRow };
-
-    // attach normalized match if good enough
-    if (best && bestScore >= 8) {
-      matched++;
-      if (best.id) usedNewIds.add(best.id);
-      return fillOrKeep(outRow, oldHeaders, best);
+    // If we got a clearly best match, use it.
+    // threshold + gap to reduce false matches.
+    const gap = bestScore - secondBestScore;
+    if (best && bestScore >= 8 && gap >= 1) {
+      usedNewKeys.add(k);
+      matched.push(mergeRows(o, best, FILL_BLANKS));
     } else {
-      unmatched++;
-      if (examples.unmatched_old_rows.length < 10) {
-        examples.unmatched_old_rows.push({
-          key: k,
-          Player: getField(oldRow, OLD_FIELD_GUESSES.player),
-          Set: getField(oldRow, OLD_FIELD_GUESSES.set),
-          "Card Number": getField(oldRow, OLD_FIELD_GUESSES.card_number),
-          Season: getField(oldRow, OLD_FIELD_GUESSES.year),
-          Team: getField(oldRow, OLD_FIELD_GUESSES.team),
-          Title: getField(oldRow, OLD_FIELD_GUESSES.title),
-        });
-      }
-      return outRow;
-    }
-  });
-
-  // also report normalized rows that were never used (useful for finding “new-only” cards)
-  const unusedNormalized = [];
-  for (const r of newObjs) {
-    if (!r.id) continue;
-    if (!usedNewIds.has(r.id)) {
-      if (unusedNormalized.length < 25) unusedNormalized.push(r);
+      ambiguous.push({
+        key: k,
+        bestScore,
+        secondBestScore,
+        old: o,
+        candidates_count: candidates.length,
+      });
+      matched.push(o);
     }
   }
+
+  // estimate unused normalized (by key)
+  let unusedEstimate = 0;
+  for (const [k, list] of index.entries()) {
+    if (!usedNewKeys.has(k)) unusedEstimate += Math.max(1, list.length);
+  }
+
+  const csvMeta = writeDelimited(matched, ",", OUT_CSV);
+  writeDelimited(matched, "\t", OUT_TSV);
 
   const report = {
     inputs: {
       old_path: OLD_PATH,
       new_path: NEW_PATH,
-      old_rows: oldObjs.length,
-      new_rows: newObjs.length,
+      old_rows: oldRows.length,
+      new_rows: newRows.length,
       fill_blanks: FILL_BLANKS,
     },
     results: {
-      matched,
-      unmatched,
-      ambiguous,
-      output_rows: merged.length,
-      output_columns: outHeaders.length,
-      unused_normalized_count_estimate: newObjs.length - usedNewIds.size,
+      matched: matched.length - unmatchedOld.length - ambiguous.length,
+      unmatched: unmatchedOld.length,
+      ambiguous: ambiguous.length,
+      output_rows: matched.length,
+      output_columns: csvMeta.columns.length,
+      unused_normalized_count_estimate: unusedEstimate,
     },
     samples: {
-      ...examples,
-      unused_normalized_sample: unusedNormalized,
+      unmatched_old_rows: unmatchedOld.slice(0, 50),
+      ambiguous: ambiguous.slice(0, 25),
+      unused_normalized_keys: Array.from(index.keys())
+        .filter((k) => !usedNewKeys.has(k))
+        .slice(0, 50),
     },
   };
 
-  ensureDirFor(OUT_CSV);
-  ensureDirFor(OUT_TSV);
-  ensureDirFor(OUT_REPORT);
-
-  fs.writeFileSync(OUT_CSV, writeCSV(outHeaders, merged), "utf8");
-  fs.writeFileSync(OUT_TSV, writeTSV(outHeaders, merged), "utf8");
+  ensureDirForFile(OUT_REPORT);
   fs.writeFileSync(OUT_REPORT, JSON.stringify(report, null, 2), "utf8");
 
   console.log(`✅ Wrote: ${OUT_CSV}`);
   console.log(`✅ Wrote: ${OUT_TSV}`);
   console.log(`📄 Report: ${OUT_REPORT}`);
   console.log(
-    `📊 matched=${matched} | unmatched=${unmatched} | ambiguous=${ambiguous} | cols=${outHeaders.length}`
+    `📊 matched=${report.results.matched} | unmatched=${report.results.unmatched} | ambiguous=${report.results.ambiguous} | cols=${report.results.output_columns}`
   );
 
-  if (unmatched > 0) {
-    console.log("⚠️ Some old rows did not match normalized (see report samples).");
+  if (report.results.unmatched > 0) {
+    console.warn("⚠️ Some old rows did not match normalized (see report samples).");
   }
   if (report.results.unused_normalized_count_estimate > 0) {
-    console.log("ℹ️ Some normalized rows were not used (see report).");
+    console.info("ℹ️ Some normalized rows were not used (see report).");
   }
 }
 
