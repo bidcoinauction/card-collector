@@ -18,7 +18,9 @@ type ApiResponse = {
   total: number;
   totalPages: number;
   items: CardRow[];
-  facets: { league: string[]; set: string[]; team: string[]; season: string[] };
+  facets?: { league: string[]; set: string[]; team: string[]; season: string[] };
+  // optional metadata
+  source?: string;
 };
 
 type Override = {
@@ -63,6 +65,78 @@ function loadJSON<T>(key: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function asStr(v: unknown) {
+  return (v ?? "").toString();
+}
+
+function firstStr(...vals: unknown[]) {
+  for (const v of vals) {
+    const s = asStr(v).trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+function coerceArray<T = any>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : [];
+}
+
+function normalizeApiResponse(raw: any, fallbackPage: number, fallbackPageSize: number): ApiResponse {
+  // Shape A (your App expects): { page, pageSize, total, totalPages, items, facets }
+  if (raw && Array.isArray(raw.items)) {
+    const page = Number(raw.page || fallbackPage) || fallbackPage;
+    const pageSize = Number(raw.pageSize || fallbackPageSize) || fallbackPageSize;
+    const total = Number(raw.total ?? raw.count ?? raw.items.length) || 0;
+    const totalPages =
+      Number(raw.totalPages) ||
+      (pageSize > 0 ? Math.max(1, Math.ceil(total / pageSize)) : 1);
+
+    return {
+      page,
+      pageSize,
+      total,
+      totalPages,
+      items: raw.items,
+      facets: raw.facets,
+      source: raw.source,
+    };
+  }
+
+  // Shape B (your prod API): { cards, count, page, pageSize, ... }
+  if (raw && Array.isArray(raw.cards)) {
+    const page = Number(raw.page || fallbackPage) || fallbackPage;
+    const pageSize = Number(raw.pageSize || fallbackPageSize) || fallbackPageSize;
+    const total = Number(raw.total ?? raw.count ?? raw.cards.length) || 0;
+    const totalPages =
+      Number(raw.totalPages) ||
+      (pageSize > 0 ? Math.max(1, Math.ceil(total / pageSize)) : 1);
+
+    // treat cards as items for the UI layer
+    return {
+      page,
+      pageSize,
+      total,
+      totalPages,
+      items: raw.cards,
+      facets: raw.facets,
+      source: raw.source,
+    };
+  }
+
+  // Shape C: plain array
+  if (Array.isArray(raw)) {
+    const items = raw as CardRow[];
+    const page = fallbackPage;
+    const pageSize = fallbackPageSize;
+    const total = items.length;
+    const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(total / pageSize)) : 1;
+    return { page, pageSize, total, totalPages, items };
+  }
+
+  // Fallback
+  return { page: fallbackPage, pageSize: fallbackPageSize, total: 0, totalPages: 1, items: [] };
 }
 
 export default function AppShell() {
@@ -136,21 +210,32 @@ export default function AppShell() {
   useEffect(() => {
     let alive = true;
     setLoading(true);
+
     fetch(`/api/cards?${qs}`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((data: ApiResponse) => {
+      .then(async (r) => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`);
+        return data;
+      })
+      .then((data: any) => {
         if (!alive) return;
-        setResp(data);
+
+        const normalized = normalizeApiResponse(data, page, pageSize);
+        setResp(normalized);
         setLoading(false);
         setSelected({});
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("Failed to load /api/cards", err);
         if (!alive) return;
         setResp(null);
         setLoading(false);
       });
-    return () => { alive = false; };
-  }, [qs]);
+
+    return () => {
+      alive = false;
+    };
+  }, [qs, page, pageSize]);
 
   function pushHistory(cardId: string, value: number, source: HistoryPoint["source"]) {
     const at = new Date().toISOString();
@@ -165,35 +250,60 @@ export default function AppShell() {
 
   const items: (CardComputed & { tag?: string; condition?: string })[] = useMemo(() => {
     const raw = resp?.items ?? [];
-    return raw
-      .map((c, idx) => {
-        const title = (c["Title"] || "").trim() || "(untitled)";
-        const id =
-          (c["Custom label (SKU)"] || "").trim() ||
-          `${title}__${(c["Season"] || "").trim()}__${idx}`;
 
-        const baseMarket = money(c["Market Avg (eBay 90d USD)"]);
-        const lastSold = money(c["Last Sold Raw (USD)"]);
+    return raw
+      .map((cAny: any, idx) => {
+        // Support BOTH schemas:
+        // - CSV style: c["Title"], c["Season"], c["Images"], etc.
+        // - Normalized style: c.title, c.season, c.images, etc.
+
+        const title = firstStr(cAny?.title, cAny?.Title) || "(untitled)";
+
+        const id =
+          firstStr(
+            cAny?.id,
+            cAny?.ID,
+            cAny?.sku,
+            cAny?.["Custom label (SKU)"],
+            cAny?.["Custom Label (SKU)"]
+          ) || `${title}__${firstStr(cAny?.season, cAny?.Season)}__${idx}`;
+
+        // Market/last sold: support normalized + CSV columns
+        const baseMarket = money(
+          firstStr(cAny?.marketAvg, cAny?.market_avg, cAny?.["Market Avg (eBay 90d USD)"])
+        );
+        const lastSold = money(firstStr(cAny?.lastSold, cAny?.last_sold, cAny?.["Last Sold Raw (USD)"]));
         const ov = overrides[id];
 
         const marketAvg = ov?.marketAvg ?? baseMarket;
         const delta = marketAvg != null && lastSold != null ? marketAvg - lastSold : null;
 
+        const images =
+          coerceArray<string>(cAny?.images).length > 0
+            ? coerceArray<string>(cAny?.images)
+            : urlsFromImages(cAny?.Images ?? cAny?.["Images"]);
+
         return {
           id,
           title,
-          player: (c["Player"] || "").trim(),
-          set: (c["Set"] || "").trim(),
-          season: (c["Season"] || "").trim(),
-          team: (c["Team"] || "").trim(),
-          league: (c["League"] || "").trim(),
-          features: (c["Features"] || "").trim(),
-          images: urlsFromImages(c["Images"]),
+
+          player: firstStr(cAny?.player, cAny?.Player),
+          set: firstStr(cAny?.set, cAny?.Set),
+          season: firstStr(cAny?.season, cAny?.Season),
+          team: firstStr(cAny?.team, cAny?.Team),
+          league: firstStr(cAny?.league, cAny?.League),
+          features: firstStr(cAny?.features, cAny?.Features),
+
+          images,
+
           marketAvg,
           lastSold,
-          lastSoldEnded: (c["Last Sold Raw Ended"] || "").trim(),
-          lastSoldUrl: (c["Last Sold Raw URL"] || "").trim(),
+
+          lastSoldEnded: firstStr(cAny?.lastSoldEnded, cAny?.["Last Sold Raw Ended"]),
+          lastSoldUrl: firstStr(cAny?.lastSoldUrl, cAny?.["Last Sold Raw URL"]),
+
           delta,
+
           tag: ov?.tag,
           condition: ov?.condition,
         };
@@ -203,7 +313,10 @@ export default function AppShell() {
 
   const openCard = useMemo(() => items.find((x) => x.id === openId) ?? null, [items, openId]);
 
-  const selectedIds = useMemo(() => Object.entries(selected).filter(([, v]) => v).map(([k]) => k), [selected]);
+  const selectedIds = useMemo(
+    () => Object.entries(selected).filter(([, v]) => v).map(([k]) => k),
+    [selected]
+  );
   const selectedCount = selectedIds.length;
 
   function toggleSelect(id: string, on: boolean) {
@@ -218,8 +331,21 @@ export default function AppShell() {
     if (!chosen.length) return;
 
     const cols = [
-      "id","title","player","set","season","team","league","tag","condition",
-      "marketAvg","lastSold","delta","lastSoldEnded","lastSoldUrl","image"
+      "id",
+      "title",
+      "player",
+      "set",
+      "season",
+      "team",
+      "league",
+      "tag",
+      "condition",
+      "marketAvg",
+      "lastSold",
+      "delta",
+      "lastSoldEnded",
+      "lastSoldUrl",
+      "image",
     ];
 
     const esc = (v: unknown) => {
@@ -230,13 +356,15 @@ export default function AppShell() {
     const lines = [
       cols.join(","),
       ...chosen.map((c) =>
-        cols.map((k) => {
-          const v: any = (c as any)[k];
-          if (k === "image") return esc(c.images[0] ?? "");
-          if (typeof v === "number") return esc(String(v));
-          return esc(v ?? "");
-        }).join(",")
-      )
+        cols
+          .map((k) => {
+            const v: any = (c as any)[k];
+            if (k === "image") return esc(c.images[0] ?? "");
+            if (typeof v === "number") return esc(String(v));
+            return esc(v ?? "");
+          })
+          .join(",")
+      ),
     ];
 
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
@@ -302,30 +430,60 @@ export default function AppShell() {
           pageSize={resp?.pageSize ?? pageSize}
           totalPages={resp?.totalPages ?? 1}
           q={q}
-          onQ={(v) => { setPage(1); setQ(v); }}
+          onQ={(v) => {
+            setPage(1);
+            setQ(v);
+          }}
           sort={sort}
           dir={dir}
-          onSort={(s) => { setPage(1); setSort(s); }}
-          onDir={(d) => { setPage(1); setDir(d); }}
+          onSort={(s) => {
+            setPage(1);
+            setSort(s);
+          }}
+          onDir={(d) => {
+            setPage(1);
+            setDir(d);
+          }}
           compact={compact}
           onCompact={() => setCompact((x) => !x)}
           viewMode={viewMode}
           onViewMode={(m) => setViewMode(m)}
           facets={resp?.facets}
           league={league}
-          setLeague={(v) => { setPage(1); setLeague(v); }}
+          setLeague={(v) => {
+            setPage(1);
+            setLeague(v);
+          }}
           setV={setV}
-          setSetV={(v) => { setPage(1); setSetV(v); }}
+          setSetV={(v) => {
+            setPage(1);
+            setSetV(v);
+          }}
           team={team}
-          setTeam={(v) => { setPage(1); setTeam(v); }}
+          setTeam={(v) => {
+            setPage(1);
+            setTeam(v);
+          }}
           season={season}
-          setSeason={(v) => { setPage(1); setSeason(v); }}
+          setSeason={(v) => {
+            setPage(1);
+            setSeason(v);
+          }}
           auto={auto}
-          setAuto={(v) => { setPage(1); setAuto(v); }}
+          setAuto={(v) => {
+            setPage(1);
+            setAuto(v);
+          }}
           rc={rc}
-          setRc={(v) => { setPage(1); setRc(v); }}
+          setRc={(v) => {
+            setPage(1);
+            setRc(v);
+          }}
           pageSizeValue={pageSize}
-          setPageSize={(n) => { setPage(1); setPageSize(n); }}
+          setPageSize={(n) => {
+            setPage(1);
+            setPageSize(n);
+          }}
         />
 
         <BulkBar
@@ -346,7 +504,10 @@ export default function AppShell() {
           onPage={setPage}
           selected={selected}
           onSelect={toggleSelect}
-          onOpen={(id) => { setOpenId(id); setTab("details"); }}
+          onOpen={(id) => {
+            setOpenId(id);
+            setTab("details");
+          }}
           compact={compact}
           viewMode={viewMode}
           historyFor={historyFor}
@@ -366,15 +527,42 @@ export default function AppShell() {
               {tab === "details" ? (
                 <div className="drawerSection">
                   <div className="drawerGrid">
-                    <div className="kv"><div className="k">Player</div><div className="v">{openCard.player || "—"}</div></div>
-                    <div className="kv"><div className="k">Team</div><div className="v">{openCard.team || "—"}</div></div>
-                    <div className="kv"><div className="k">League</div><div className="v">{openCard.league || "—"}</div></div>
-                    <div className="kv"><div className="k">Set</div><div className="v">{openCard.set || "—"}</div></div>
-                    <div className="kv"><div className="k">Season</div><div className="v">{openCard.season || "—"}</div></div>
-                    <div className="kv"><div className="k">Features</div><div className="v">{openCard.features || "—"}</div></div>
-                    <div className="kv"><div className="k">Market Avg</div><div className="v">{fmtMoney(openCard.marketAvg)}</div></div>
-                    <div className="kv"><div className="k">Last Sold</div><div className="v">{fmtMoney(openCard.lastSold)}</div></div>
-                    <div className="kv"><div className="k">Delta</div><div className="v">{openCard.delta == null ? "—" : fmtMoney(openCard.delta)}</div></div>
+                    <div className="kv">
+                      <div className="k">Player</div>
+                      <div className="v">{openCard.player || "—"}</div>
+                    </div>
+                    <div className="kv">
+                      <div className="k">Team</div>
+                      <div className="v">{openCard.team || "—"}</div>
+                    </div>
+                    <div className="kv">
+                      <div className="k">League</div>
+                      <div className="v">{openCard.league || "—"}</div>
+                    </div>
+                    <div className="kv">
+                      <div className="k">Set</div>
+                      <div className="v">{openCard.set || "—"}</div>
+                    </div>
+                    <div className="kv">
+                      <div className="k">Season</div>
+                      <div className="v">{openCard.season || "—"}</div>
+                    </div>
+                    <div className="kv">
+                      <div className="k">Features</div>
+                      <div className="v">{openCard.features || "—"}</div>
+                    </div>
+                    <div className="kv">
+                      <div className="k">Market Avg</div>
+                      <div className="v">{fmtMoney(openCard.marketAvg)}</div>
+                    </div>
+                    <div className="kv">
+                      <div className="k">Last Sold</div>
+                      <div className="v">{fmtMoney(openCard.lastSold)}</div>
+                    </div>
+                    <div className="kv">
+                      <div className="k">Delta</div>
+                      <div className="v">{openCard.delta == null ? "—" : fmtMoney(openCard.delta)}</div>
+                    </div>
                   </div>
 
                   <div className="drawerImages">
@@ -403,14 +591,21 @@ export default function AppShell() {
                     </div>
 
                     <div className="historyList">
-                      {(history[openCard.id] || []).slice(-8).reverse().map((p, idx) => (
-                        <div className="historyRow" key={idx}>
-                          <div className="historyV">{fmtMoney(p.v)}</div>
-                          <div className="historyMeta muted">{p.source} • {new Date(p.at).toLocaleString()}</div>
+                      {(history[openCard.id] || [])
+                        .slice(-8)
+                        .reverse()
+                        .map((p, idx) => (
+                          <div className="historyRow" key={idx}>
+                            <div className="historyV">{fmtMoney(p.v)}</div>
+                            <div className="historyMeta muted">
+                              {p.source} • {new Date(p.at).toLocaleString()}
+                            </div>
+                          </div>
+                        ))}
+                      {!history[openCard.id] || history[openCard.id].length === 0 ? (
+                        <div className="muted" style={{ marginTop: 8 }}>
+                          No saved history yet — update value from Price Research or Bulk Value.
                         </div>
-                      ))}
-                      {(!history[openCard.id] || history[openCard.id].length === 0) ? (
-                        <div className="muted" style={{ marginTop: 8 }}>No saved history yet — update value from Price Research or Bulk Value.</div>
                       ) : null}
                     </div>
                   </div>
